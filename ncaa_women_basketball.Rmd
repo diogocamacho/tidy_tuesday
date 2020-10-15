@@ -1,0 +1,156 @@
+---
+title: "NCAA Women's Basketball Tournament"
+author: "Diogo M. Camacho"
+date: "10/15/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidymodels)
+library(caret)
+
+```
+
+## Get the data
+```{r}
+tournament_data <- readr::read_csv(file = "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-10-06/tournament.csv")
+```
+
+
+## Exploratory analyses
+
+```{r}
+tournament_data <- tournament_data %>%
+  dplyr::filter(., !is.na(seed), !is.na(conf_percent))
+```
+
+### some plots
+```{r year-conference-seed-average}
+
+tournament_data %>%
+  dplyr::select(., conference, seed) %>%
+  group_by(conference) %>%
+  dplyr::count(ts = seed == 1) %>%
+  dplyr::filter(ts, n > 1) %>% 
+  ggplot(aes(x = forcats::fct_reorder(conference, n), y = n, fill = conference)) + 
+  geom_col(color = "black", alpha = 0.8) + 
+  coord_flip() +
+  labs(title = "Number of #1 seeds per conference", x = NULL, y = NULL) + 
+  theme_bw() +
+  theme(title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "plain"))
+
+```
+
+
+```{r seed-to-reg_percent-wins}
+tournament_data %>%
+  dplyr::select(., conference, seed, reg_percent) %>%
+  group_by(conference) %>%
+  ggplot(aes(x = seed, y = reg_percent, color = conference)) + 
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ conference) +
+  theme_bw() +
+  theme(title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "plain"), 
+        legend.position = "none")
+
+```
+
+```{r seed-tourn-percent}
+tournament_data %>%
+  dplyr::select(., conference, seed, full_percent) %>%
+  group_by(conference) %>%
+  ggplot(aes(x = seed, y = full_percent, color = conference)) + 
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ conference) +
+  theme_bw() +
+  theme(title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "plain"), 
+        legend.position = "none")
+
+```
+
+
+## Prediction of points per team
+
+Let's predict tournament finish given regular season percentage and seed placement. I'll do a regression model based on the generalized linear model with elastic net regularization.
+
+```{r data_split}
+data_split <- rsample::initial_split(tournament_data, prop = 0.75)
+train_data <- rsample::training(data_split)
+test_data <- rsample::testing(data_split)
+
+train_data <- train_data %>%
+  dplyr::mutate(tourney_finish = as.factor(tourney_finish))
+
+test_data <- test_data %>%
+  dplyr::mutate(tourney_finish = as.factor(tourney_finish))
+```
+
+
+```{r model}
+glm_model <- parsnip::linear_reg(mode = "regression", mixture = 0) %>%
+  set_engine("glmnet")
+```
+
+```{r fit_model}
+glm_fit <- glm_model %>%
+  parsnip::fit(conf_percent ~ reg_percent + seed, data = train_data)
+```
+
+```{r}
+glm_preds <- predict(glm_fit, new_data = test_data, penalty = 0.5)
+```
+
+```{r compare_predictions}
+
+test_data %>%
+  tibble::add_column(glm_pred = glm_preds$.pred) %>%
+  ggplot(aes(x = conf_percent, y = glm_pred)) +
+  geom_point(alpha = 0.5)
+
+```
+
+## Classification model
+Doing a random forest to do multi-class classification on expected tournament finishing. (similar to Julia Silge's datasaurus analyses)
+
+```{r}
+# tourney_folds <- train_data %>% 
+#   mutate(tourney_finish = factor(tourney_finish)) %>% 
+#   bootstraps(times = 50)
+```
+
+
+```{r}
+rf_model <- parsnip::rand_forest(trees = 1000, min_n = 5) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+```
+
+```{r}
+# rf_workflow <- workflows::workflow() %>%
+#   add_model(rf_model) %>%
+#   add_formula(tourney_finish ~ reg_percent + seed)
+```
+
+
+```{r}
+rf_fit <- rf_model %>%
+  parsnip::fit(tourney_finish ~ reg_percent + seed, data = train_data)
+
+# doParallel::registerDoParallel()
+# rf_fit <- tune::fit_resamples(rf_workflow, tourney_folds, control = control_resamples(save_pred = TRUE))
+```
+
+```{r}
+rf_preds <- predict(rf_fit, new_data = test_data)
+
+
+# rf_fit %>% collect_predictions() %>% group_by(id) %>% roc_curve(., .pred_1st:.pred_class) %>% autoplot()
+
+```
+
