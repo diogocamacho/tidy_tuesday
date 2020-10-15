@@ -148,7 +148,8 @@ rf_fit <- rf_model %>%
 
 ```{r}
 rf_preds <- predict(rf_fit, new_data = test_data)
-
+res <- tibble(original = test_data$tourney_finish, prediction = rf_preds$.pred_class)
+accuracy <- length(which(res$original == res$prediction)) / nrow(res)
 
 # rf_fit %>% collect_predictions() %>% group_by(id) %>% roc_curve(., .pred_1st:.pred_class) %>% autoplot()
 
